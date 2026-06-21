@@ -1,1 +1,56 @@
 
+name: build-wangp-image
+
+# Builds the WanGP Docker image and pushes it to GitHub Container Registry
+# (ghcr.io) automatically. RunPod then pulls the image from there.
+#
+# Runs on every push to main, and can be triggered manually from the
+# Actions tab (workflow_dispatch).
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'Dockerfile'
+      - 'start.sh'
+      - '.github/workflows/build.yml'
+  workflow_dispatch:
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write   # required to push to ghcr.io
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Free up disk space
+        # The runner only has ~14GB free by default; the CUDA base image is
+        # large, so we reclaim space first to avoid "no space left" errors.
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android /opt/hostedtoolcache/CodeQL
+          sudo docker image prune -a -f || true
+          df -h
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/wangp:latest
+          # GHCR images default to private; you'll make it public once (see README)
+          # so RunPod can pull it without credentials.
