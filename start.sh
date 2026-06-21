@@ -1,21 +1,41 @@
 #!/usr/bin/env bash
-# Launches WanGP on boot. The code + deps live baked in at /opt/Wan2GP.
-# Your persistent data (models, loras, outputs) lives on the volume at
-# /workspace. We symlink the volume dirs into the baked repo so models you've
-# already downloaded are reused and new ones persist across pod restarts.
+# Launches WanGP on boot.
+#
+# Code + Python deps are baked into the image at /opt/Wan2GP (no reinstall).
+# Your persistent data lives on the network volume mounted at /workspace.
+#
+# Your existing volume already has a full Wan2GP checkout at /workspace/Wan2GP
+# from the original install, including:
+#   /workspace/Wan2GP/loras    (your IC-LoRAs, incl. loras/ltx2)
+#   /workspace/Wan2GP/ckpts    (downloaded model weights)
+#   /workspace/Wan2GP/outputs  (generated videos)
+#
+# We point the BAKED repo's data dirs at those volume folders via symlinks so
+# everything you've already downloaded is reused and new files persist. Nothing
+# re-downloads.
 set -euo pipefail
 
 BAKED=/opt/Wan2GP
 VOL=/workspace
+VOLREPO="$VOL/Wan2GP"          # your existing checkout on the volume
 
-# Persistent dirs on the volume (created once, survive restarts)
-mkdir -p "$VOL/models/wan2gp" "$VOL/loras" "$VOL/outputs" "$VOL/settings"
+# --- Resolve persistent data dirs -------------------------------------------
+# Prefer the dirs in your existing volume checkout; create them if missing so a
+# brand-new volume still works.
+LORAS_DIR="$VOLREPO/loras"
+CKPTS_DIR="$VOLREPO/ckpts"
+OUTPUTS_DIR="$VOLREPO/outputs"
+SETTINGS_DIR="$VOL/settings"
 
-# Point the baked repo's data dirs at the volume.
-# ckpts = downloaded model weights (the big stuff you don't want to re-pull)
-ln -sfn "$VOL/models/wan2gp" "$BAKED/ckpts"
-ln -sfn "$VOL/loras"         "$BAKED/loras"
-ln -sfn "$VOL/outputs"       "$BAKED/outputs"
+mkdir -p "$LORAS_DIR" "$CKPTS_DIR" "$OUTPUTS_DIR" "$SETTINGS_DIR"
+
+# --- Link volume data into the baked repo -----------------------------------
+# -n so we replace any dir/symlink the image shipped with, pointing it at the
+# volume instead. The whole loras tree is linked, so loras/ltx2 (and any other
+# family subfolders you add later) come across automatically.
+ln -sfn "$LORAS_DIR"   "$BAKED/loras"
+ln -sfn "$CKPTS_DIR"   "$BAKED/ckpts"
+ln -sfn "$OUTPUTS_DIR" "$BAKED/outputs"
 
 cd "$BAKED"
 
@@ -23,9 +43,8 @@ export HF_HUB_ENABLE_HF_TRANSFER=1
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
 # --listen binds 0.0.0.0 so the RunPod proxy on :7860 can reach it.
-# No --share needed once the port is exposed in the template (which it is).
-# Add --share back here only if you ever want the gradio.live fallback too.
+# Port 7860 is exposed in the template, so no --share needed.
 exec python wgp.py \
     --listen \
     --server-port 7860 \
-    --settings "$VOL/settings"
+    --settings "$SETTINGS_DIR"
